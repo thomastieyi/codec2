@@ -1,4 +1,5 @@
 build_linux
+window_build
 stm32/build_stm32
 stm32/libstm32f4.a
 stm32/unittest/lib/python/__pycache__/

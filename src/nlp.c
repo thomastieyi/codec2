@@ -252,15 +252,23 @@ float nlp(
     m /= 2;
     n /= 2;
 
-    float Sn8k[n];
+    float* Sn8k = (float*)malloc(n * sizeof(float));
+    if (Sn8k == NULL) {
+        // Handle memory allocation failure
+        // You might want to add appropriate error handling here
+        return;
+    }
+
     fdmdv_16_to_8(Sn8k, &nlp->Sn16k[FDMDV_OS_TAPS_16K], n);
 
     /* Square latest input samples */
 
     for (i = m - n, j = 0; i < m; i++, j++) {
-      nlp->sq[i] = Sn8k[j] * Sn8k[j];
+        nlp->sq[i] = Sn8k[j] * Sn8k[j];
     }
     assert(j <= n);
+
+    free(Sn8k);
   }
   // fprintf(stderr, "n: %d m: %d\n", n, m);
 

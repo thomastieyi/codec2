@@ -225,22 +225,33 @@ void mag_to_phase(
     float phase[], /* Nfft/2+1 output phase samples in radians       */
     float Gdbfk[], /* Nfft/2+1 positive freq amplitudes samples in dB */
     int Nfft, codec2_fft_cfg fft_fwd_cfg, codec2_fft_cfg fft_inv_cfg) {
-  COMP Sdb[Nfft], c[Nfft], cf[Nfft], Cf[Nfft];
+  COMP *Sdb = (COMP *)malloc(Nfft * sizeof(COMP));
+  COMP *c = (COMP *)malloc(Nfft * sizeof(COMP));
+  COMP *cf = (COMP *)malloc(Nfft * sizeof(COMP));
+  COMP *Cf = (COMP *)malloc(Nfft * sizeof(COMP));
+
+  if (Sdb == NULL || c == NULL || cf == NULL || Cf == NULL) {
+    // Handle memory allocation failure
+    free(Sdb);
+    free(c);
+    free(cf);
+    free(Cf);
+    return;  // Or handle the error in another appropriate way
+  }
+
   int Ns = Nfft / 2 + 1;
   int i;
 
   /* install negative frequency components, 1/Nfft takes into
      account kiss fft lack of scaling on ifft */
-
   Sdb[0].real = Gdbfk[0];
-  Sdb[0].imag = 0.0;
+  Sdb[0].imag = 0.0f;
   for (i = 1; i < Ns; i++) {
     Sdb[i].real = Sdb[Nfft - i].real = Gdbfk[i];
-    Sdb[i].imag = Sdb[Nfft - i].imag = 0.0;
+    Sdb[i].imag = Sdb[Nfft - i].imag = 0.0f;
   }
 
   /* compute real cepstrum from log magnitude spectrum */
-
   codec2_fft(fft_inv_cfg, Sdb, c);
   for (i = 0; i < Nfft; i++) {
     c[i].real /= (float)Nfft;
@@ -248,28 +259,29 @@ void mag_to_phase(
   }
 
   /* Fold cepstrum to reflect non-min-phase zeros inside unit circle */
-
   cf[0] = c[0];
   for (i = 1; i < Ns - 1; i++) {
     cf[i] = cadd(c[i], c[Nfft - i]);
   }
   cf[Ns - 1] = c[Ns - 1];
   for (i = Ns; i < Nfft; i++) {
-    cf[i].real = 0.0;
-    cf[i].imag = 0.0;
+    cf[i].real = 0.0f;
+    cf[i].imag = 0.0f;
   }
 
   /* Cf = dB_magnitude + j * minimum_phase */
-
   codec2_fft(fft_fwd_cfg, cf, Cf);
 
   /*  The maths says we are meant to be using log(x), not 20*log10(x),
       so we need to scale the phase to account for this:
       log(x) = 20*log10(x)/scale */
-
-  float scale = (20.0 / logf(10.0));
-
+  float scale = (20.0f / logf(10.0f));
   for (i = 0; i < Ns; i++) {
     phase[i] = Cf[i].imag / scale;
   }
+
+  free(Sdb);
+  free(c);
+  free(cf);
+  free(Cf);
 }

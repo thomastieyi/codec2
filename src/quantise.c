@@ -121,27 +121,37 @@ long quantise(const float *cb, float vec[], float w[], int k, int m, float *se)
 
 void encode_lspds_scalar(int indexes[], float lsp[], int order) {
   int i, k, m;
-  float lsp_hz[order];
-  float lsp__hz[order];
-  float dlsp[order];
-  float dlsp_[order];
-  float wt[order];
+  float *lsp_hz = (float *)malloc(order * sizeof(float));
+  float *lsp__hz = (float *)malloc(order * sizeof(float));
+  float *dlsp = (float *)malloc(order * sizeof(float));
+  float *dlsp_ = (float *)malloc(order * sizeof(float));
+  float *wt = (float *)malloc(order * sizeof(float));
   const float *cb;
   float se;
 
+  if (!lsp_hz || !lsp__hz || !dlsp || !dlsp_ || !wt) {
+    // Handle memory allocation failure
+    free(lsp_hz);
+    free(lsp__hz);
+    free(dlsp);
+    free(dlsp_);
+    free(wt);
+    return;
+  }
+
   for (i = 0; i < order; i++) {
-    wt[i] = 1.0;
+    wt[i] = 1.0f;
   }
 
   /* convert from radians to Hz so we can use human readable
      frequencies */
+  for (i = 0; i < order; i++) {
+    lsp_hz[i] = (4000.0f / (float)M_PI) * lsp[i];
+  }
 
-  for (i = 0; i < order; i++) lsp_hz[i] = (4000.0 / PI) * lsp[i];
-
-  wt[0] = 1.0;
+  wt[0] = 1.0f;
   for (i = 0; i < order; i++) {
     /* find difference from previous quantised lsp */
-
     if (i)
       dlsp[i] = lsp_hz[i] - lsp__hz[i - 1];
     else
@@ -158,26 +168,46 @@ void encode_lspds_scalar(int indexes[], float lsp[], int order) {
     else
       lsp__hz[0] = dlsp_[0];
   }
+
+  free(lsp_hz);
+  free(lsp__hz);
+  free(dlsp);
+  free(dlsp_);
+  free(wt);
 }
+
 
 void decode_lspds_scalar(float lsp_[], int indexes[], int order) {
   int i, k;
-  float lsp__hz[order];
-  float dlsp_[order];
+  float *lsp__hz;
+  float *dlsp_;
   const float *cb;
+
+  // 动态分配内存
+  lsp__hz = (float *)malloc(order * sizeof(float));
+  dlsp_ = (float *)malloc(order * sizeof(float));
+
+  if (lsp__hz == NULL || dlsp_ == NULL) {
+    // 处理内存分配失败
+    if (lsp__hz) free(lsp__hz);
+    if (dlsp_) free(dlsp_);
+    return;
+  }
 
   for (i = 0; i < order; i++) {
     k = lsp_cbd[i].k;
     cb = lsp_cbd[i].cb;
     dlsp_[i] = cb[indexes[i] * k];
-
     if (i)
       lsp__hz[i] = lsp__hz[i - 1] + dlsp_[i];
     else
       lsp__hz[0] = dlsp_[0];
-
     lsp_[i] = (PI / 4000.0) * lsp__hz[i];
   }
+
+  // 释放动态分配的内存
+  free(lsp__hz);
+  free(dlsp_);
 }
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -230,30 +260,46 @@ int find_nearest_weighted(const float *codebook, int nb_entries, float *x,
 
 void lspjmv_quantise(float *x, float *xq, int order) {
   int i, n1, n2, n3;
-  float err[order], err2[order], err3[order];
-  float w[order], w2[order], w3[order];
+  float *err = (float *)malloc(order * sizeof(float));
+  float *err2 = (float *)malloc((order / 2) * sizeof(float));
+  float *err3 = (float *)malloc((order / 2) * sizeof(float));
+  float *w = (float *)malloc(order * sizeof(float));
+  float *w2 = (float *)malloc((order / 2) * sizeof(float));
+  float *w3 = (float *)malloc((order / 2) * sizeof(float));
   const float *codebook1 = lsp_cbjmv[0].cb;
   const float *codebook2 = lsp_cbjmv[1].cb;
   const float *codebook3 = lsp_cbjmv[2].cb;
 
+  if (!err || !err2 || !err3 || !w || !w2 || !w3) {
+    // Handle memory allocation failure
+    free(err);
+    free(err2);
+    free(err3);
+    free(w);
+    free(w2);
+    free(w3);
+    return;
+  }
+
   w[0] = MIN(x[0], x[1] - x[0]);
   for (i = 1; i < order - 1; i++) w[i] = MIN(x[i] - x[i - 1], x[i + 1] - x[i]);
-  w[order - 1] = MIN(x[order - 1] - x[order - 2], PI - x[order - 1]);
+  w[order - 1] = MIN(x[order - 1] - x[order - 2], (float)M_PI - x[order - 1]);
 
   compute_weights(x, w, order);
-
   n1 = find_nearest(codebook1, lsp_cbjmv[0].m, x, order);
 
   for (i = 0; i < order; i++) {
     xq[i] = codebook1[order * n1 + i];
     err[i] = x[i] - xq[i];
   }
+
   for (i = 0; i < order / 2; i++) {
     err2[i] = err[2 * i];
     err3[i] = err[2 * i + 1];
     w2[i] = w[2 * i];
     w3[i] = w[2 * i + 1];
   }
+
   n2 = find_nearest_weighted(codebook2, lsp_cbjmv[1].m, err2, w2, order / 2);
   n3 = find_nearest_weighted(codebook3, lsp_cbjmv[2].m, err3, w3, order / 2);
 
@@ -261,6 +307,13 @@ void lspjmv_quantise(float *x, float *xq, int order) {
     xq[2 * i] += codebook2[order * n2 / 2 + i];
     xq[2 * i + 1] += codebook3[order * n3 / 2 + i];
   }
+
+  free(err);
+  free(err2);
+  free(err3);
+  free(w);
+  free(w2);
+  free(w3);
 }
 
 int check_lsp_order(float lsp[], int order) {
@@ -270,11 +323,10 @@ int check_lsp_order(float lsp[], int order) {
 
   for (i = 1; i < order; i++)
     if (lsp[i] < lsp[i - 1]) {
-      // fprintf(stderr, "swap %d\n",i);
       swaps++;
       tmp = lsp[i - 1];
-      lsp[i - 1] = lsp[i] - 0.1;
-      lsp[i] = tmp + 0.1;
+      lsp[i - 1] = lsp[i] - 0.1f;
+      lsp[i] = tmp + 0.1f;
       i = 1; /* start check again, as swap may have caused out of order */
     }
 
@@ -653,9 +705,20 @@ float decode_log_Wo(C2CONST *c2const, int index, int bits) {
 float speech_to_uq_lsps(float lsp[], float ak[], float Sn[], float w[],
                         int m_pitch, int order) {
   int i, roots;
-  float Wn[m_pitch];
-  float R[order + 1];
+  float *Wn;
+  float *R;
   float e, E;
+
+  // Dynamically allocate memory for Wn and R
+  Wn = (float *)malloc(m_pitch * sizeof(float));
+  R = (float *)malloc((order + 1) * sizeof(float));
+
+  if (Wn == NULL || R == NULL) {
+    // Handle memory allocation failure
+    if (Wn) free(Wn);
+    if (R) free(R);
+    return 0.0;
+  }
 
   e = 0.0;
   for (i = 0; i < m_pitch; i++) {
@@ -664,9 +727,10 @@ float speech_to_uq_lsps(float lsp[], float ak[], float Sn[], float w[],
   }
 
   /* trap 0 energy case as LPC analysis will fail */
-
   if (e == 0.0) {
     for (i = 0; i < order; i++) lsp[i] = (PI / order) * (float)i;
+    free(Wn);
+    free(R);
     return 0.0;
   }
 
@@ -680,14 +744,17 @@ float speech_to_uq_lsps(float lsp[], float ak[], float Sn[], float w[],
      help occasional fails in the LSP root finding.  Important to do this
      after energy calculation to avoid -ve energy values.
   */
-
-  for (i = 0; i <= order; i++) ak[i] *= powf(0.994, (float)i);
+  for (i = 0; i <= order; i++) ak[i] *= powf(0.994f, (float)i);
 
   roots = lpc_to_lsp(ak, order, lsp, 5, LSP_DELTA1);
   if (roots != order) {
     /* if root finding fails use some benign LSP values instead */
     for (i = 0; i < order; i++) lsp[i] = (PI / order) * (float)i;
   }
+
+  // Free dynamically allocated memory
+  free(Wn);
+  free(R);
 
   return E;
 }
@@ -706,17 +773,22 @@ float speech_to_uq_lsps(float lsp[], float ak[], float Sn[], float w[],
 void encode_lsps_scalar(int indexes[], float lsp[], int order) {
   int i, k, m;
   float wt[1];
-  float lsp_hz[order];
+  float *lsp_hz;
   const float *cb;
   float se;
 
+  /* Dynamically allocate memory for lsp_hz */
+  lsp_hz = (float *)malloc(order * sizeof(float));
+  if (lsp_hz == NULL) {
+    /* Handle memory allocation failure */
+    return;
+  }
+
   /* convert from radians to Hz so we can use human readable
      frequencies */
-
   for (i = 0; i < order; i++) lsp_hz[i] = (4000.0 / PI) * lsp[i];
 
   /* scalar quantisers */
-
   wt[0] = 1.0;
   for (i = 0; i < order; i++) {
     k = lsp_cb[i].k;
@@ -724,6 +796,9 @@ void encode_lsps_scalar(int indexes[], float lsp[], int order) {
     cb = lsp_cb[i].cb;
     indexes[i] = quantise(cb, &lsp_hz[i], wt, k, m, &se);
   }
+
+  /* Free the dynamically allocated memory */
+  free(lsp_hz);
 }
 
 /*---------------------------------------------------------------------------*\
@@ -739,8 +814,15 @@ void encode_lsps_scalar(int indexes[], float lsp[], int order) {
 
 void decode_lsps_scalar(float lsp[], int indexes[], int order) {
   int i, k;
-  float lsp_hz[order];
+  float *lsp_hz;
   const float *cb;
+
+  // 动态分配内存
+  lsp_hz = (float *)malloc(order * sizeof(float));
+  if (lsp_hz == NULL) {
+    // 处理内存分配失败
+    return;
+  }
 
   for (i = 0; i < order; i++) {
     k = lsp_cb[i].k;
@@ -749,8 +831,12 @@ void decode_lsps_scalar(float lsp[], int indexes[], int order) {
   }
 
   /* convert back to radians */
+  for (i = 0; i < order; i++) {
+    lsp[i] = (PI / 4000.0) * lsp_hz[i];
+  }
 
-  for (i = 0; i < order; i++) lsp[i] = (PI / 4000.0) * lsp_hz[i];
+  // 释放动态分配的内存
+  free(lsp_hz);
 }
 
 /*---------------------------------------------------------------------------*\
@@ -763,40 +849,70 @@ void decode_lsps_scalar(float lsp[], int indexes[], int order) {
 
 \*---------------------------------------------------------------------------*/
 
+
 void encode_lsps_vq(int *indexes, float *x, float *xq, int order) {
   int i, n1, n2, n3;
-  float err[order], err2[order], err3[order];
-  float w[order], w2[order], w3[order];
+  float *err, *err2, *err3;
+  float *w, *w2, *w3;
   const float *codebook1 = lsp_cbjmv[0].cb;
   const float *codebook2 = lsp_cbjmv[1].cb;
   const float *codebook3 = lsp_cbjmv[2].cb;
 
+  // 动态分配内存
+  err = (float *)malloc(order * sizeof(float));
+  err2 = (float *)malloc((order / 2) * sizeof(float));
+  err3 = (float *)malloc((order / 2) * sizeof(float));
+  w = (float *)malloc(order * sizeof(float));
+  w2 = (float *)malloc((order / 2) * sizeof(float));
+  w3 = (float *)malloc((order / 2) * sizeof(float));
+
+  if (!err || !err2 || !err3 || !w || !w2 || !w3) {
+    // 处理内存分配失败
+    if (err) free(err);
+    if (err2) free(err2);
+    if (err3) free(err3);
+    if (w) free(w);
+    if (w2) free(w2);
+    if (w3) free(w3);
+    return;
+  }
+
   w[0] = MIN(x[0], x[1] - x[0]);
-  for (i = 1; i < order - 1; i++) w[i] = MIN(x[i] - x[i - 1], x[i + 1] - x[i]);
+  for (i = 1; i < order - 1; i++) {
+    w[i] = MIN(x[i] - x[i - 1], x[i + 1] - x[i]);
+  }
   w[order - 1] = MIN(x[order - 1] - x[order - 2], PI - x[order - 1]);
 
   compute_weights(x, w, order);
 
   n1 = find_nearest(codebook1, lsp_cbjmv[0].m, x, order);
-
   for (i = 0; i < order; i++) {
     xq[i] = codebook1[order * n1 + i];
     err[i] = x[i] - xq[i];
   }
+
   for (i = 0; i < order / 2; i++) {
     err2[i] = err[2 * i];
     err3[i] = err[2 * i + 1];
     w2[i] = w[2 * i];
     w3[i] = w[2 * i + 1];
   }
+
   n2 = find_nearest_weighted(codebook2, lsp_cbjmv[1].m, err2, w2, order / 2);
   n3 = find_nearest_weighted(codebook3, lsp_cbjmv[2].m, err3, w3, order / 2);
 
   indexes[0] = n1;
   indexes[1] = n2;
   indexes[2] = n3;
-}
 
+  // 释放动态分配的内存
+  free(err);
+  free(err2);
+  free(err3);
+  free(w);
+  free(w2);
+  free(w3);
+}
 /*---------------------------------------------------------------------------*\
 
   FUNCTION....: decode_lsps_vq()

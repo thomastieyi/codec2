@@ -52,6 +52,18 @@
 #include "quantise.h"
 #include "sine.h"
 
+#if _MSC_VER >= 1900
+#include "stdio.h"
+_ACRTIMP_ALT FILE *__cdecl __acrt_iob_func(unsigned);
+#ifdef __cplusplus
+extern "C"
+#endif
+    FILE *__cdecl __iob_func(unsigned i) {
+  return __acrt_iob_func(i);
+}
+#endif /* _MSC_VER>=1900 */
+
+
 /*---------------------------------------------------------------------------* \
 
                              FUNCTION HEADERS
@@ -1451,8 +1463,19 @@ void codec2_encode_700c(struct CODEC2 *c2, unsigned char *bits,
   }
 
   int K = 20;
-  float rate_K_vec[K], mean;
-  float rate_K_vec_no_mean[K], rate_K_vec_no_mean_[K];
+  float *rate_K_vec = (float *)malloc(K * sizeof(float));
+  float mean;
+  float *rate_K_vec_no_mean = (float *)malloc(K * sizeof(float));
+  float *rate_K_vec_no_mean_ = (float *)malloc(K * sizeof(float));
+
+  if (rate_K_vec == NULL || rate_K_vec_no_mean == NULL || rate_K_vec_no_mean_ == NULL) {
+    // Handle memory allocation failure
+    // You might want to add appropriate error handling here
+    if (rate_K_vec) free(rate_K_vec);
+    if (rate_K_vec_no_mean) free(rate_K_vec_no_mean);
+    if (rate_K_vec_no_mean_) free(rate_K_vec_no_mean_);
+    return;
+  }
 
   newamp1_model_to_indexes(&c2->c2const, indexes, &model, rate_K_vec,
                            c2->rate_K_sample_freqs_kHz, K, &mean,
@@ -1468,11 +1491,14 @@ void codec2_encode_700c(struct CODEC2 *c2, unsigned char *bits,
     fwrite(rate_K_vec_no_mean_, K, sizeof(float), c2->fmlfeat);
     MODEL model_;
     memcpy(&model_, &model, sizeof(model));
-    float rate_K_vec_[K];
-    for (int k = 0; k < K; k++) rate_K_vec_[k] = rate_K_vec_no_mean_[k] + mean;
-    resample_rate_L(&c2->c2const, &model_, rate_K_vec_,
-                    c2->rate_K_sample_freqs_kHz, K);
-    fwrite(&model_.A, MAX_AMP, sizeof(float), c2->fmlfeat);
+    float *rate_K_vec_ = (float *)malloc(K * sizeof(float));
+    if (rate_K_vec_ != NULL) {
+      for (int k = 0; k < K; k++) rate_K_vec_[k] = rate_K_vec_no_mean_[k] + mean;
+      resample_rate_L(&c2->c2const, &model_, rate_K_vec_,
+                      c2->rate_K_sample_freqs_kHz, K);
+      fwrite(&model_.A, MAX_AMP, sizeof(float), c2->fmlfeat);
+      free(rate_K_vec_);
+    }
   }
   if (c2->fmlmodel != NULL) fwrite(&model, sizeof(MODEL), 1, c2->fmlmodel);
 #endif
@@ -1483,6 +1509,10 @@ void codec2_encode_700c(struct CODEC2 *c2, unsigned char *bits,
   pack_natural_or_gray(bits, &nbit, indexes[3], 6, 0);
 
   assert(nbit == (unsigned)codec2_bits_per_frame(c2));
+
+  free(rate_K_vec);
+  free(rate_K_vec_no_mean);
+  free(rate_K_vec_no_mean_);
 }
 
 /*---------------------------------------------------------------------------*\
@@ -1497,7 +1527,7 @@ void codec2_encode_700c(struct CODEC2 *c2, unsigned char *bits,
 
 void codec2_decode_700c(struct CODEC2 *c2, short speech[],
                         const unsigned char *bits) {
-  MODEL model[4];
+  MODEL *model = (MODEL *)malloc(4 * sizeof(MODEL));
   int indexes[4];
   int i;
   unsigned int nbit = 0;
@@ -1512,8 +1542,16 @@ void codec2_decode_700c(struct CODEC2 *c2, short speech[],
   indexes[3] = unpack_natural_or_gray(bits, &nbit, 6, 0);
 
   int M = 4;
-  COMP HH[M][MAX_AMP + 1];
-  float interpolated_surface_[M][NEWAMP1_K];
+  COMP (*HH)[MAX_AMP + 1] = (COMP (*)[MAX_AMP + 1])malloc(M * (MAX_AMP + 1) * sizeof(COMP));
+  float (*interpolated_surface_)[NEWAMP1_K] = (float (*)[NEWAMP1_K])malloc(M * NEWAMP1_K * sizeof(float));
+
+  if (model == NULL || HH == NULL || interpolated_surface_ == NULL) {
+    // Handle memory allocation failure
+    if (model) free(model);
+    if (HH) free(HH);
+    if (interpolated_surface_) free(interpolated_surface_);
+    return;
+  }
 
   newamp1_indexes_to_model(
       &c2->c2const, model, (COMP *)HH, (float *)interpolated_surface_,
@@ -1526,7 +1564,12 @@ void codec2_decode_700c(struct CODEC2 *c2, short speech[],
     if (c2->fmlfeat != NULL) {
       /* We use standard nb_features=55 feature records for compatibility with
        * train_lpcnet.py */
-      float features[55] = {0};
+      float *features = (float *)malloc(55 * sizeof(float));
+      if (features == NULL) {
+        // Handle memory allocation failure
+        break;
+      }
+      memset(features, 0, 55 * sizeof(float));
       /* just using 18/20 for compatibility with LPCNet, coarse scaling for NN
        * input */
       for (int j = 0; j < 18; j++)
@@ -1535,6 +1578,7 @@ void codec2_decode_700c(struct CODEC2 *c2, short speech[],
       features[36] = 0.02 * (pitch_index - 100);
       features[37] = model[i].voiced;
       fwrite(features, 55, sizeof(float), c2->fmlfeat);
+      free(features);
     }
 
     /* 700C is a little quieter so lets apply some experimentally derived audio
@@ -1542,6 +1586,10 @@ void codec2_decode_700c(struct CODEC2 *c2, short speech[],
     synthesise_one_frame(c2, &speech[c2->n_samp * i], &model[i], &HH[i][0],
                          1.5);
   }
+
+  free(model);
+  free(HH);
+  free(interpolated_surface_);
 }
 
 /*---------------------------------------------------------------------------*\
@@ -1594,7 +1642,9 @@ float codec2_get_energy(struct CODEC2 *c2, const unsigned char *bits) {
          (CODEC2_MODE_ACTIVE(CODEC2_MODE_1200, c2->mode)) ||
          (CODEC2_MODE_ACTIVE(CODEC2_MODE_700C, c2->mode)));
   MODEL model;
-  float xq_dec[2] = {};
+  float xq_dec[2];
+  xq_dec[0] = 0.0f;
+  xq_dec[1] = 0.0f;
   int e_index, WoE_index;
   float e = 0.0f;
   unsigned int nbit;
@@ -1876,22 +1926,25 @@ void codec2_open_mlfeat(struct CODEC2 *codec2_state, char *feat_fn,
 void codec2_load_codebook(struct CODEC2 *codec2_state, int num,
                           char *filename) {
   FILE *f;
-
   if ((f = fopen(filename, "rb")) == NULL) {
     fprintf(stderr, "error opening codebook file: %s\n", filename);
     exit(1);
   }
-  // fprintf(stderr, "reading newamp1vq_cb[%d] k=%d m=%d\n", num,
-  // newamp1vq_cb[num].k, newamp1vq_cb[num].m);
-  float tmp[newamp1vq_cb[num].k * newamp1vq_cb[num].m];
-  int nread =
-      fread(tmp, sizeof(float), newamp1vq_cb[num].k * newamp1vq_cb[num].m, f);
+
+  size_t size = newamp1vq_cb[num].k * newamp1vq_cb[num].m;
+  float *tmp = (float *)malloc(size * sizeof(float));
+  if (tmp == NULL) {
+    fprintf(stderr, "memory allocation failed\n");
+    fclose(f);
+    exit(1);
+  }
+
+  size_t nread = fread(tmp, sizeof(float), size, f);
   float *p = (float *)newamp1vq_cb[num].cb;
-  for (int i = 0; i < newamp1vq_cb[num].k * newamp1vq_cb[num].m; i++)
-    p[i] = tmp[i];
-  // fprintf(stderr, "nread = %d %f %f\n", nread, newamp1vq_cb[num].cb[0],
-  // newamp1vq_cb[num].cb[1]);
-  assert(nread == newamp1vq_cb[num].k * newamp1vq_cb[num].m);
+  for (size_t i = 0; i < size; i++) p[i] = tmp[i];
+
+  assert(nread == size);
+  free(tmp);
   fclose(f);
 }
 #endif

@@ -80,8 +80,13 @@ add_custom_target(dist
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # Set default C flags.
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")
-
+if(MSVC)
+  # MSVC 编译器标志
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W4 /wd4244 /wd4267 /wd4334")
+else()
+  # GCC 和 Clang 编译器标志
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-strict-overflow")
+endif()
 # Check for what C standard is supported.
 if(NOT WIN32)
 include(CheckCCompilerFlag)
@@ -116,7 +121,7 @@ endif(MINGW)
 # Default options
 #
 option(BUILD_SHARED_LIBS
-    "Build shared library. Set to OFF for static library." ON)
+    "Build shared library. Set to OFF for static library." OFF)
 option(UNITTEST "Build unittest binaries." OFF)
 
 # LPCNet needs to be bootstrapped because codec2 and freedvlpcnet are

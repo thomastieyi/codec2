@@ -171,24 +171,26 @@ float rate_K_mbest_encode(int *indexes, float *x, float *xq, int ndim,
   const float *codebook1 = newamp1vq_cb[0].cb;
   const float *codebook2 = newamp1vq_cb[1].cb;
   struct MBEST *mbest_stage1, *mbest_stage2;
-  float target[ndim];
+  float *target;
   int index[MBEST_STAGES];
   float mse, tmp;
 
-  /* codebook is compiled for a fixed K */
-
   assert(ndim == newamp1vq_cb[0].k);
+
+  target = (float *)malloc(ndim * sizeof(float));
+  if (target == NULL) {
+    // Handle memory allocation failure
+    return -1.0f;  // or some error value
+  }
 
   mbest_stage1 = mbest_create(mbest_entries);
   mbest_stage2 = mbest_create(mbest_entries);
   for (i = 0; i < MBEST_STAGES; i++) index[i] = 0;
 
   /* Stage 1 */
-
   mbest_search(codebook1, x, ndim, newamp1vq_cb[0].m, mbest_stage1, index);
 
   /* Stage 2 */
-
   for (j = 0; j < mbest_entries; j++) {
     index[1] = n1 = mbest_stage1->list[j].index[0];
     for (i = 0; i < ndim; i++) target[i] = x[i] - codebook1[ndim * n1 + i];
@@ -207,10 +209,10 @@ float rate_K_mbest_encode(int *indexes, float *x, float *xq, int ndim,
 
   mbest_destroy(mbest_stage1);
   mbest_destroy(mbest_stage2);
+  free(target);
 
   indexes[0] = n1;
   indexes[1] = n2;
-
   return mse;
 }
 
@@ -232,32 +234,33 @@ float rate_K_mbest_encode(int *indexes, float *x, float *xq, int ndim,
 void post_filter_newamp1(float vec[], float sample_freq_kHz[], int K,
                          float pf_gain) {
   int k;
-
-  /*
-    vec is rate K vector describing spectrum of current frame lets
-    pre-emp before applying PF. 20dB/dec over 300Hz.  Postfilter
-    affects energy of frame so we measure energy before and after
-    and normalise.  Plenty of room for experimentation here.
-  */
-
-  float pre[K];
+  float *pre;
   float e_before = 0.0;
   float e_after = 0.0;
+
+  pre = (float *)malloc(K * sizeof(float));
+  if (pre == NULL) {
+    // Handle memory allocation failure
+    return;
+  }
+
   for (k = 0; k < K; k++) {
-    pre[k] = 20.0 * log10f(sample_freq_kHz[k] / 0.3);
+    pre[k] = 20.0f * log10f(sample_freq_kHz[k] / 0.3f);
     vec[k] += pre[k];
-    e_before += POW10F(vec[k] / 10.0);
+    e_before += POW10F(vec[k] / 10.0f);
     vec[k] *= pf_gain;
-    e_after += POW10F(vec[k] / 10.0);
+    e_after += POW10F(vec[k] / 10.0f);
   }
 
   float gain = e_after / e_before;
-  float gaindB = 10 * log10f(gain);
+  float gaindB = 10.0f * log10f(gain);
 
   for (k = 0; k < K; k++) {
     vec[k] -= gaindB;
     vec[k] -= pre[k];
   }
+
+  free(pre);
 }
 
 /*---------------------------------------------------------------------------*\
@@ -317,36 +320,51 @@ void interp_Wo_v(float Wo_[], int L_[], int voicing_[], float Wo1, float Wo2,
 
 \*---------------------------------------------------------------------------*/
 
-void resample_rate_L(C2CONST *c2const, MODEL *model, float rate_K_vec[],
-                     float rate_K_sample_freqs_kHz[], int K) {
-  float rate_K_vec_term[K + 2], rate_K_sample_freqs_kHz_term[K + 2];
-  float AmdB[MAX_AMP + 1], rate_L_sample_freqs_kHz[MAX_AMP + 1];
+void resample_rate_L(C2CONST *c2const, MODEL *model, float *rate_K_vec,
+                     float *rate_K_sample_freqs_kHz, int K) {
+  float *rate_K_vec_term = malloc((K + 2) * sizeof(float));
+  float *rate_K_sample_freqs_kHz_term = malloc((K + 2) * sizeof(float));
+  float *AmdB = malloc((MAX_AMP + 1) * sizeof(float));
+  float *rate_L_sample_freqs_kHz = malloc((MAX_AMP + 1) * sizeof(float));
   int m, k;
 
+  if (!rate_K_vec_term || !rate_K_sample_freqs_kHz_term || !AmdB ||
+      !rate_L_sample_freqs_kHz) {
+    // Handle memory allocation failure
+    // Free any successfully allocated memory
+    free(rate_K_vec_term);
+    free(rate_K_sample_freqs_kHz_term);
+    free(AmdB);
+    free(rate_L_sample_freqs_kHz);
+    return;
+  }
+
   /* terminate either end of the rate K vecs with 0dB points */
-
-  rate_K_vec_term[0] = rate_K_vec_term[K + 1] = 0.0;
-  rate_K_sample_freqs_kHz_term[0] = 0.0;
-  rate_K_sample_freqs_kHz_term[K + 1] = 4.0;
-
+  rate_K_vec_term[0] = rate_K_vec_term[K + 1] = 0.0f;
+  rate_K_sample_freqs_kHz_term[0] = 0.0f;
+  rate_K_sample_freqs_kHz_term[K + 1] = 4.0f;
   for (k = 0; k < K; k++) {
     rate_K_vec_term[k + 1] = rate_K_vec[k];
     rate_K_sample_freqs_kHz_term[k + 1] = rate_K_sample_freqs_kHz[k];
-    // printf("k: %d f: %f rate_K: %f\n", k, rate_K_sample_freqs_kHz[k],
-    // rate_K_vec[k]);
   }
 
   for (m = 1; m <= model->L; m++) {
-    rate_L_sample_freqs_kHz[m] = m * model->Wo * (c2const->Fs / 2000.0) / M_PI;
+    rate_L_sample_freqs_kHz[m] =
+        m * model->Wo * (c2const->Fs / 2000.0f) / (float)M_PI;
   }
 
   interp_para(&AmdB[1], rate_K_sample_freqs_kHz_term, rate_K_vec_term, K + 2,
               &rate_L_sample_freqs_kHz[1], model->L);
+
   for (m = 1; m <= model->L; m++) {
-    model->A[m] = POW10F(AmdB[m] / 20.0);
-    // printf("m: %d f: %f AdB: %f A: %f\n", m, rate_L_sample_freqs_kHz[m],
-    // AmdB[m], model->A[m]);
+    model->A[m] = powf(10.0f, AmdB[m] / 20.0f);
   }
+
+  // Free allocated memory
+  free(rate_K_vec_term);
+  free(rate_K_sample_freqs_kHz_term);
+  free(AmdB);
+  free(rate_L_sample_freqs_kHz);
 }
 
 /*---------------------------------------------------------------------------*\
@@ -364,29 +382,51 @@ void determine_phase(C2CONST *c2const, COMP H[], MODEL *model, int Nfft,
                      codec2_fft_cfg fwd_cfg, codec2_fft_cfg inv_cfg) {
   int i, m, b;
   int Ns = Nfft / 2 + 1;
-  float Gdbfk[Ns], sample_freqs_kHz[Ns], phase[Ns];
-  float AmdB[MAX_AMP + 1], rate_L_sample_freqs_kHz[MAX_AMP + 1];
+  float *Gdbfk = malloc(Ns * sizeof(float));
+  float *sample_freqs_kHz = malloc(Ns * sizeof(float));
+  float *phase = malloc(Ns * sizeof(float));
+  float *AmdB = malloc((MAX_AMP + 1) * sizeof(float));
+  float *rate_L_sample_freqs_kHz = malloc((MAX_AMP + 1) * sizeof(float));
+
+  if (!Gdbfk || !sample_freqs_kHz || !phase || !AmdB ||
+      !rate_L_sample_freqs_kHz) {
+    // Handle memory allocation failure
+    free(Gdbfk);
+    free(sample_freqs_kHz);
+    free(phase);
+    free(AmdB);
+    free(rate_L_sample_freqs_kHz);
+    return;
+  }
 
   for (m = 1; m <= model->L; m++) {
-    assert(model->A[m] != 0.0);
-    AmdB[m] = 20.0 * log10f(model->A[m]);
+    assert(model->A[m] != 0.0f);
+    AmdB[m] = 20.0f * log10f(model->A[m]);
     rate_L_sample_freqs_kHz[m] =
-        (float)m * model->Wo * (c2const->Fs / 2000.0) / M_PI;
+        (float)m * model->Wo * (c2const->Fs / 2000.0f) / (float)M_PI;
   }
 
   for (i = 0; i < Ns; i++) {
-    sample_freqs_kHz[i] = (c2const->Fs / 1000.0) * (float)i / Nfft;
+    sample_freqs_kHz[i] = (c2const->Fs / 1000.0f) * (float)i / (float)Nfft;
   }
 
   interp_para(Gdbfk, &rate_L_sample_freqs_kHz[1], &AmdB[1], model->L,
               sample_freqs_kHz, Ns);
+
   mag_to_phase(phase, Gdbfk, Nfft, fwd_cfg, inv_cfg);
 
   for (m = 1; m <= model->L; m++) {
-    b = floorf(0.5 + m * model->Wo * Nfft / (2.0 * M_PI));
+    b = (int)floorf(0.5f + m * model->Wo * Nfft / (2.0f * (float)M_PI));
     H[m].real = cosf(phase[b]);
     H[m].imag = sinf(phase[b]);
   }
+
+  // Free allocated memory
+  free(Gdbfk);
+  free(sample_freqs_kHz);
+  free(phase);
+  free(AmdB);
+  free(rate_L_sample_freqs_kHz);
 }
 
 /*---------------------------------------------------------------------------* \
@@ -404,38 +444,63 @@ void determine_autoc(C2CONST *c2const, float Rk[], int order, MODEL *model,
                      int Nfft, codec2_fft_cfg fwd_cfg, codec2_fft_cfg inv_cfg) {
   int i, m;
   int Ns = Nfft / 2 + 1;
-  float Gdbfk[Ns], sample_freqs_kHz[Ns];
-  float AmdB[MAX_AMP + 1], rate_L_sample_freqs_kHz[MAX_AMP + 1];
+  float *Gdbfk = malloc(Ns * sizeof(float));
+  float *sample_freqs_kHz = malloc(Ns * sizeof(float));
+  float *AmdB = malloc((MAX_AMP + 1) * sizeof(float));
+  float *rate_L_sample_freqs_kHz = malloc((MAX_AMP + 1) * sizeof(float));
+  COMP *S = malloc(Nfft * sizeof(COMP));
+  COMP *R = malloc(Nfft * sizeof(COMP));
+
+  if (!Gdbfk || !sample_freqs_kHz || !AmdB || !rate_L_sample_freqs_kHz || !S ||
+      !R) {
+    // Handle memory allocation failure
+    free(Gdbfk);
+    free(sample_freqs_kHz);
+    free(AmdB);
+    free(rate_L_sample_freqs_kHz);
+    free(S);
+    free(R);
+    return;
+  }
 
   /* interpolate in the log domain */
   for (m = 1; m <= model->L; m++) {
-    assert(model->A[m] != 0.0);
-    AmdB[m] = 20.0 * log10f(model->A[m]);
+    assert(model->A[m] != 0.0f);
+    AmdB[m] = 20.0f * log10f(model->A[m]);
     rate_L_sample_freqs_kHz[m] =
-        (float)m * model->Wo * (c2const->Fs / 2000.0) / M_PI;
+        (float)m * model->Wo * (c2const->Fs / 2000.0f) / (float)M_PI;
   }
 
   for (i = 0; i < Ns; i++) {
-    sample_freqs_kHz[i] = (c2const->Fs / 1000.0) * (float)i / Nfft;
+    sample_freqs_kHz[i] = (c2const->Fs / 1000.0f) * (float)i / (float)Nfft;
   }
 
   interp_para(Gdbfk, &rate_L_sample_freqs_kHz[1], &AmdB[1], model->L,
               sample_freqs_kHz, Ns);
 
-  COMP S[Nfft], R[Nfft];
-
   /* install negative frequency components, convert to mag squared of spectrum
    */
-  S[0].real = pow(10.0, Gdbfk[0] / 10.0);
-  S[0].imag = 0.0;
+  S[0].real = powf(10.0f, Gdbfk[0] / 10.0f);
+  S[0].imag = 0.0f;
   for (i = 1; i < Ns; i++) {
-    S[i].real = S[Nfft - i].real = pow(10.0, Gdbfk[i] / 10.0);
-    S[i].imag = S[Nfft - i].imag = 0.0;
+    S[i].real = S[Nfft - i].real = powf(10.0f, Gdbfk[i] / 10.0f);
+    S[i].imag = S[Nfft - i].imag = 0.0f;
   }
 
   /* IDFT of mag squared is autocorrelation function */
   codec2_fft(inv_cfg, S, R);
-  for (int k = 0; k < order + 1; k++) Rk[k] = R[k].real;
+
+  for (int k = 0; k < order + 1; k++) {
+    Rk[k] = R[k].real;
+  }
+
+  // Free allocated memory
+  free(Gdbfk);
+  free(sample_freqs_kHz);
+  free(AmdB);
+  free(rate_L_sample_freqs_kHz);
+  free(S);
+  free(R);
 }
 
 /* update and optionally run "front eq" equaliser on before VQ */
@@ -591,55 +656,69 @@ void newamp1_indexes_to_rate_K_vec(float rate_K_vec_[],
 
 \*---------------------------------------------------------------------------*/
 
-void newamp1_indexes_to_model(C2CONST *c2const, MODEL model_[], COMP H[],
+void newamp1_indexes_to_model(C2CONST *c2const, MODEL *model_, COMP *H,
                               float *interpolated_surface_,
-                              float prev_rate_K_vec_[], float *Wo_left,
-                              int *voicing_left,
-                              float rate_K_sample_freqs_kHz[], int K,
-                              codec2_fft_cfg fwd_cfg, codec2_fft_cfg inv_cfg,
-                              int indexes[], float user_rate_K_vec_no_mean_[],
+                              float *prev_rate_K_vec_, float *Wo_left,
+                              int *voicing_left, float *rate_K_sample_freqs_kHz,
+                              int K, codec2_fft_cfg fwd_cfg,
+                              codec2_fft_cfg inv_cfg, int *indexes,
+                              float *user_rate_K_vec_no_mean_,
                               int post_filter_en) {
-  float rate_K_vec_[K], rate_K_vec_no_mean_[K], mean_, Wo_right;
+  float *rate_K_vec_ = malloc(K * sizeof(float));
+  float *rate_K_vec_no_mean_ = malloc(K * sizeof(float));
+  float mean_, Wo_right;
   int voicing_right, k;
   int M = 4;
 
-  /* extract latest rate K vector */
+  if (!rate_K_vec_ || !rate_K_vec_no_mean_) {
+    // Handle memory allocation failure
+    free(rate_K_vec_);
+    free(rate_K_vec_no_mean_);
+    return;
+  }
 
+  /* extract latest rate K vector */
   newamp1_indexes_to_rate_K_vec(rate_K_vec_, rate_K_vec_no_mean_,
                                 rate_K_sample_freqs_kHz, K, &mean_, indexes,
                                 user_rate_K_vec_no_mean_, post_filter_en);
 
   /* decode latest Wo and voicing */
-
   if (indexes[3]) {
     Wo_right = decode_log_Wo(c2const, indexes[3], 6);
     voicing_right = 1;
   } else {
-    Wo_right = 2.0 * M_PI / 100.0;
+    Wo_right = 2.0f * (float)M_PI / 100.0f;
     voicing_right = 0;
   }
 
   /* interpolate 25Hz rate K vec back to 100Hz */
-
   float *left_vec = prev_rate_K_vec_;
   float *right_vec = rate_K_vec_;
   newamp1_interpolate(interpolated_surface_, left_vec, right_vec, K);
 
   /* interpolate 25Hz v and Wo back to 100Hz */
+  float *aWo_ = malloc(M * sizeof(float));
+  int *avoicing_ = malloc(M * sizeof(int));
+  int *aL_ = malloc(M * sizeof(int));
 
-  float aWo_[M];
-  int avoicing_[M], aL_[M], i;
+  if (!aWo_ || !avoicing_ || !aL_) {
+    // Handle memory allocation failure
+    free(rate_K_vec_);
+    free(rate_K_vec_no_mean_);
+    free(aWo_);
+    free(avoicing_);
+    free(aL_);
+    return;
+  }
 
   interp_Wo_v(aWo_, aL_, avoicing_, *Wo_left, Wo_right, *voicing_left,
               voicing_right);
 
   /* back to rate L amplitudes, synthesise phase for each frame */
-
-  for (i = 0; i < M; i++) {
+  for (int i = 0; i < M; i++) {
     model_[i].Wo = aWo_[i];
     model_[i].L = aL_[i];
     model_[i].voiced = avoicing_[i];
-
     resample_rate_L(c2const, &model_[i], &interpolated_surface_[K * i],
                     rate_K_sample_freqs_kHz, K);
     determine_phase(c2const, &H[(MAX_AMP + 1) * i], &model_[i],
@@ -647,10 +726,16 @@ void newamp1_indexes_to_model(C2CONST *c2const, MODEL model_[], COMP H[],
   }
 
   /* update memories for next time */
-
   for (k = 0; k < K; k++) {
     prev_rate_K_vec_[k] = rate_K_vec_[k];
   }
   *Wo_left = Wo_right;
   *voicing_left = voicing_right;
+
+  // Free allocated memory
+  free(rate_K_vec_);
+  free(rate_K_vec_no_mean_);
+  free(aWo_);
+  free(avoicing_);
+  free(aL_);
 }

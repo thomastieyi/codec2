@@ -125,46 +125,46 @@ void autocorrelate(float Sn[], /* frame of Nsam windowed speech samples */
 }
 
 /*---------------------------------------------------------------------------*\
-
   levinson_durbin()
-
   Given P+1 autocorrelation coefficients, finds P Linear Prediction Coeff.
   (LPCs) where P is the order of the LPC all-pole model. The Levinson-Durbin
   algorithm is used, and is described in:
-
     J. Makhoul
     "Linear prediction, a tutorial review"
     Proceedings of the IEEE
     Vol-63, No. 4, April 1975
-
 \*---------------------------------------------------------------------------*/
-
 void levinson_durbin(float R[],    /* order+1 autocorrelation coeff */
                      float lpcs[], /* order+1 LPC's */
                      int order     /* order of the LPC analysis */
 ) {
-  float a[order + 1][order + 1];
+  float *a = malloc((order + 1) * (order + 1) * sizeof(float));
+  if (a == NULL) {
+    // Handle memory allocation failure
+    return;
+  }
+
   float sum, e, k;
   int i, j; /* loop variables */
 
   e = R[0]; /* Equation 38a, Makhoul */
-
   for (i = 1; i <= order; i++) {
     sum = 0.0;
-    for (j = 1; j <= i - 1; j++) sum += a[i - 1][j] * R[i - j];
+    for (j = 1; j <= i - 1; j++) sum += a[(i - 1) * (order + 1) + j] * R[i - j];
     k = -1.0 * (R[i] + sum) / e; /* Equation 38b, Makhoul */
     if (fabsf(k) > 1.0) k = 0.0;
-
-    a[i][i] = k;
-
+    a[i * (order + 1) + i] = k;
     for (j = 1; j <= i - 1; j++)
-      a[i][j] = a[i - 1][j] + k * a[i - 1][i - j]; /* Equation 38c, Makhoul */
-
-    e *= (1 - k * k); /* Equation 38d, Makhoul */
+      a[i * (order + 1) + j] =
+          a[(i - 1) * (order + 1) + j] +
+          k * a[(i - 1) * (order + 1) + (i - j)]; /* Equation 38c, Makhoul */
+    e *= (1 - k * k);                             /* Equation 38d, Makhoul */
   }
 
-  for (i = 1; i <= order; i++) lpcs[i] = a[order][i];
+  for (i = 1; i <= order; i++) lpcs[i] = a[order * (order + 1) + i];
   lpcs[0] = 1.0;
+
+  free(a);
 }
 
 /*---------------------------------------------------------------------------*\
@@ -244,18 +244,24 @@ void find_aks(float Sn[], /* Nsam samples with order sample memory */
               float *E    /* residual energy */
 ) {
   float Wn[LPC_MAX_N]; /* windowed frame of Nsam speech samples */
-  float R[order + 1];  /* order+1 autocorrelation values of Sn[] */
+  float R[LPC_MAX_N];  /* order+1 autocorrelation values of Sn[] */
   int i;
 
   assert(Nsam < LPC_MAX_N);
+  assert(order < LPC_MAX_N);
 
   hanning_window(Sn, Wn, Nsam);
   autocorrelate(Wn, R, Nsam, order);
   levinson_durbin(R, a, order);
 
   *E = 0.0;
-  for (i = 0; i <= order; i++) *E += a[i] * R[i];
-  if (*E < 0.0) *E = 1E-12;
+  for (i = 0; i <= order; i++) {
+    *E += a[i] * R[i];
+  }
+
+  if (*E < 0.0) {
+    *E = 1E-12f;
+  }
 }
 
 /*---------------------------------------------------------------------------*\

@@ -40,7 +40,6 @@
 #define UNIFORM 1       /* random bit errors                      */
 #define TWO_STATE 2     /* Two state error model                  */
 #define UNIFORM_RANGE 3 /* random bit errors over a certain range */
-
 void print_help(const struct option *long_options, int num_opts, char *argv[]);
 
 int main(int argc, char *argv[]) {
